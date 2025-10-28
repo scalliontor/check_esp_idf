@@ -1,0 +1,20 @@
+# ===== Core Dependencies =====
+numpy>=1.24.0
+soundfile>=0.12.1
+
+# ===== Speech-to-Text (STT) =====
+sherpa-onnx>=1.10.0
+
+# ===== Text-to-Speech (TTS) =====
+# ZipVoice dependencies (install từ source hoặc theo hướng dẫn của ZipVoice)
+
+# ===== Large Language Model (LLM) =====
+google-genai>=0.2.0
+
+# ===== Optional Dependencies =====
+librosa>=0.10.0  # Advanced audio processing
+resampy>=0.4.2   # Better resampling
+tqdm>=4.65.0     # Progress bars
+torch 
+torchaudio
+onnxruntime

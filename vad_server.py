@@ -6,6 +6,7 @@ import os
 import torch
 from collections import deque
 import numpy as np
+from pathlib import Path # Import Path để kiểm tra kiểu dữ liệu
 
 # --- IMPORT PIPELINE TỪ THƯ MỤC MODULES ---
 from modules.pipeline import VoiceAssistantPipeline
@@ -14,16 +15,12 @@ from modules.pipeline import VoiceAssistantPipeline
 SAMPLE_RATE = 16000
 BIT_DEPTH_BYTES = 2
 CHANNELS = 1
-AUDIO_CHUNK_SIZE = 1024 # Kích thước chunk để gửi lại cho client
-
 # --- Cấu hình VAD ---
-# SỬA LỖI: Model yêu cầu chính xác 512 mẫu 16-bit (1024 bytes)
 VAD_CHUNK_SIZE = 1024
-
 VAD_SPEECH_THRESHOLD = 0.5
 VAD_SILENCE_FRAMES_TRIGGER = 1
 VAD_SILENCE_FRAMES_END = 25
-VAD_BUFFER_FRAMES = 5 # Kích thước của bộ đệm trước
+VAD_BUFFER_FRAMES = 5
 
 app = FastAPI()
 
@@ -74,7 +71,6 @@ async def websocket_endpoint(websocket: WebSocket):
     speech_trigger_counter = 0
     is_processing = False
     
-    # <<< PHẦN 1: Khởi tạo bộ đệm trước
     pre_buffer = deque(maxlen=VAD_BUFFER_FRAMES) 
     speech_buffer = []
 
@@ -107,7 +103,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     if speech_trigger_counter >= VAD_SILENCE_FRAMES_TRIGGER:
                         print("\n==> Voice activity detected. Start recording.")
                         is_speaking = True
-                        # <<< PHẦN 3: Đổ bộ đệm trước vào bộ đệm chính
                         speech_buffer.extend(list(pre_buffer))
                 if is_speaking:
                     speech_buffer.append(data)
@@ -126,18 +121,36 @@ async def websocket_endpoint(websocket: WebSocket):
                             try:
                                 result = await asyncio.to_thread(pipeline.process, audio_input_path=input_audio_path)
                                 output_audio_path = result.get("output_audio") if isinstance(result, dict) else None
+                                
                                 if output_audio_path and os.path.exists(output_audio_path):
+
+                                    # ======================================================= #
+                                    # --- PHẦN ĐƯỢC THAY THẾ BẰNG LOGIC ĐƠN GIẢN HƠN ---       #
+                                    # ======================================================= #
                                     try:
-                                        with wave.open(output_audio_path, 'rb') as wf_out:
-                                            # ... (code streaming âm thanh về client) ...
-                                            frames_per_chunk = max(1, AUDIO_CHUNK_SIZE // BIT_DEPTH_BYTES)
-                                            while True:
-                                                frames = wf_out.readframes(frames_per_chunk)
-                                                if not frames:
-                                                    break
-                                                await websocket.send_bytes(frames)
+                                        # Chuyển đổi Path object thành string để đảm bảo tương thích
+                                        output_path_str = str(output_audio_path)
+                                        
+                                        with open(output_path_str, 'rb') as f_wav:
+                                            # Đọc toàn bộ file
+                                            full_wav_data = f_wav.read()
+                                        
+                                        # Header của file WAV chuẩn là 44 bytes.
+                                        # Chúng ta chỉ gửi dữ liệu PCM thô (raw audio) sau header.
+                                        pcm_data = full_wav_data[44:]
+                                        
+                                        # Gửi dữ liệu theo từng chunk để không làm quá tải websocket
+                                        chunk_size_to_send = 2048 
+                                        for i in range(0, len(pcm_data), chunk_size_to_send):
+                                            chunk = pcm_data[i:i+chunk_size_to_send]
+                                            await websocket.send_bytes(chunk)
+
                                     except Exception as e:
                                         print(f"\nFailed to stream WAV frames: {e}")
+                                    # ======================================================= #
+                                    # --- KẾT THÚC PHẦN THAY THẾ ---                           #
+                                    # ======================================================= #
+                                        
                                 else:
                                     print("\nPipeline did not return a valid audio output path.")
                             except Exception as e:
@@ -151,7 +164,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         pre_buffer.clear()
                         is_processing = False
                 else:
-                    # <<< PHẦN 2: Thêm dữ liệu vào bộ đệm trước khi im lặng
                     pre_buffer.append(data)
 
     except WebSocketDisconnect:

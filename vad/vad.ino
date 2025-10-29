@@ -12,7 +12,7 @@ using namespace websockets;
 // --- Cấu hình Mạng & WebSocket ---
 const char* ssid = "iPhone của hành";         // <-- THAY ĐỔI TÊN WIFI
 const char* password = "123456780"; // <-- THAY ĐỔI MẬT KHẨU WIFI
-const char* websocket_server_host = "172.20.10.04"; // <-- THAY ĐỔI IP CỦA SERVER
+const char* websocket_server_host = "172.20.10.2"; // <-- THAY ĐỔI IP CỦA SERVER
 const uint16_t websocket_server_port = 8000;
 const char* websocket_server_path = "/ws";
 
@@ -175,6 +175,8 @@ void setup() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(ssid, password);
+
     delay(500);
     Serial.print(".");
   }

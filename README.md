@@ -60,13 +60,13 @@ const char* websocket_server_path = "/ws";
 arduino-cli board list
 
 # Compile the sketch
-arduino-cli compile --fqbn esp32:esp32:esp32s3 ./vad
+arduino-cli compile --fqbn esp32:esp32:esp32 ./vad
 
 # Upload (adjust port if needed)
-arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:esp32s3 ./vad
+arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 ./vad
 
 # Monitor serial
-arduino-cli monitor -p /dev/ttyACM0 --fqbn esp32:esp32:esp32s3 -c baudrate=115200
+arduino-cli monitor -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32s3 -c baudrate=115200
 ```
 
 ### 5) Use it

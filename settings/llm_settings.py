@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # ===== API Configuration =====
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyAVJ-Hr8Qge3sQQq_A5vbNIBg8TEM6AZCg")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyDYEGVEymUEuL-d7dGC6AZKYtV7tTd5fuI")
 GEMINI_MODEL = "gemini-2.5-flash" 
 
 # ===== Thinking/Chain-of-Thought Settings =====

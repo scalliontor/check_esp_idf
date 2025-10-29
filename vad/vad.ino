@@ -12,17 +12,18 @@ using namespace websockets;
 // --- Cấu hình Mạng & WebSocket ---
 const char* ssid = "iPhone của hành";         // <-- THAY ĐỔI TÊN WIFI
 const char* password = "123456780"; // <-- THAY ĐỔI MẬT KHẨU WIFI
-const char* websocket_server_host = "172.20.10.02"; // <-- THAY ĐỔI IP CỦA SERVER
+const char* websocket_server_host = "172.20.10.04"; // <-- THAY ĐỔI IP CỦA SERVER
 const uint16_t websocket_server_port = 8000;
 const char* websocket_server_path = "/ws";
 
 // --- Chân cắm I2S ---
-#define I2S_MIC_SERIAL_CLOCK    18
-#define I2S_MIC_WORD_SELECT     17
-#define I2S_MIC_SERIAL_DATA     16
-#define I2S_SPEAKER_SERIAL_CLOCK 37
-#define I2S_SPEAKER_WORD_SELECT  38
-#define I2S_SPEAKER_SERIAL_DATA  36
+#define I2S_MIC_SERIAL_CLOCK    14
+#define I2S_MIC_WORD_SELECT     12
+#define I2S_MIC_SERIAL_DATA     15
+
+#define I2S_SPEAKER_SERIAL_CLOCK 18
+#define I2S_SPEAKER_WORD_SELECT  5
+#define I2S_SPEAKER_SERIAL_DATA  19
 
 // --- Cài đặt I2S ---
 #define I2S_SAMPLE_RATE         16000
@@ -31,7 +32,7 @@ const char* websocket_server_path = "/ws";
 #define I2S_SPEAKER_PORT        I2S_NUM_1
 
 // Kích thước buffer đọc I2S, PHẢI KHỚP VỚI VAD_CHUNK_SIZE CỦA SERVER
-#define I2S_READ_CHUNK_SIZE     960 
+#define I2S_READ_CHUNK_SIZE     1024
 
 // --- Cấu hình Âm thanh Loa ---
 #define SPEAKER_GAIN            8.0f
@@ -56,21 +57,49 @@ byte i2s_read_buffer[I2S_READ_CHUNK_SIZE];
 // ===============================================================
 void setup_i2s_input() {
     Serial.println("Configuring I2S Input (Microphone)...");
-    i2s_config_t i2s_mic_config = {.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX), .sample_rate = I2S_SAMPLE_RATE, .bits_per_sample = I2S_BITS_PER_SAMPLE, .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, .communication_format = I2S_COMM_FORMAT_STAND_I2S, .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, .dma_buf_count = 8, .dma_buf_len = 256};
-    i2s_pin_config_t i2s_mic_pins = {.bck_io_num = I2S_MIC_SERIAL_CLOCK, .ws_io_num = I2S_MIC_WORD_SELECT, .data_out_num = I2S_PIN_NO_CHANGE, .data_in_num = I2S_MIC_SERIAL_DATA};
+    i2s_config_t i2s_mic_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+        .sample_rate = I2S_SAMPLE_RATE,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 8,
+        .dma_buf_len = 256
+    };
+    i2s_pin_config_t i2s_mic_pins = {
+        .bck_io_num = I2S_MIC_SERIAL_CLOCK,
+        .ws_io_num = I2S_MIC_WORD_SELECT,
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num = I2S_MIC_SERIAL_DATA
+    };
     ESP_ERROR_CHECK(i2s_driver_install(I2S_MIC_PORT, &i2s_mic_config, 0, NULL));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_MIC_PORT, &i2s_mic_pins));
 }
 void setup_i2s_output() {
     Serial.println("Configuring I2S Output (Speaker)...");
-    i2s_config_t i2s_speaker_config = {.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX), .sample_rate = I2S_SAMPLE_RATE, .bits_per_sample = I2S_BITS_PER_SAMPLE, .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT, .communication_format = I2S_COMM_FORMAT_STAND_I2S, .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, .dma_buf_count = 8, .dma_buf_len = 256, .tx_desc_auto_clear = true};
-    i2s_pin_config_t i2s_speaker_pins = {.bck_io_num = I2S_SPEAKER_SERIAL_CLOCK, .ws_io_num = I2S_SPEAKER_WORD_SELECT, .data_out_num = I2S_SPEAKER_SERIAL_DATA, .data_in_num = I2S_PIN_NO_CHANGE};
+    i2s_config_t i2s_speaker_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+        .sample_rate = I2S_SAMPLE_RATE,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 8,
+        .dma_buf_len = 256,
+        .use_apll = true,               // <-- ĐÃ DI CHUYỂN LÊN ĐÂY
+        .tx_desc_auto_clear = true      // <-- ĐẶT SAU use_apll
+    };
+    i2s_pin_config_t i2s_speaker_pins = {
+        .bck_io_num = I2S_SPEAKER_SERIAL_CLOCK,
+        .ws_io_num = I2S_SPEAKER_WORD_SELECT,
+        .data_out_num = I2S_SPEAKER_SERIAL_DATA,
+        .data_in_num = I2S_PIN_NO_CHANGE
+    };
     ESP_ERROR_CHECK(i2s_driver_install(I2S_SPEAKER_PORT, &i2s_speaker_config, 0, NULL));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_SPEAKER_PORT, &i2s_speaker_pins));
     ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_SPEAKER_PORT));
 }
-
-
 // ===============================================================
 // 4. WEBSOCKET & ÂM THANH
 // ===============================================================

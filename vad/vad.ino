@@ -12,7 +12,7 @@ using namespace websockets;
 // --- Cấu hình Mạng & WebSocket ---
 const char* ssid = "iPhone của hành";         // <-- THAY ĐỔI TÊN WIFI
 const char* password = "123456780"; // <-- THAY ĐỔI MẬT KHẨU WIFI
-const char* websocket_server_host = "172.20.10.2"; // <-- THAY ĐỔI IP CỦA SERVER
+const char* websocket_server_host = "172.20.10.4"; // <-- THAY ĐỔI IP CỦA SERVER
 const uint16_t websocket_server_port = 8000;
 const char* websocket_server_path = "/ws";
 
@@ -36,6 +36,7 @@ const char* websocket_server_path = "/ws";
 
 // --- Cấu hình Âm thanh Loa ---
 #define SPEAKER_GAIN            8.0f
+#define PLAYBACK_BUFFER_SIZE    4096  // Small buffer to smooth playback jitter
 
 // ===============================================================
 // 2. BIẾN TOÀN CỤC
@@ -51,6 +52,8 @@ enum State {
 volatile State currentState = STATE_STREAMING;
 
 byte i2s_read_buffer[I2S_READ_CHUNK_SIZE];
+byte playback_buffer[PLAYBACK_BUFFER_SIZE];
+size_t playback_buffer_fill = 0;
 
 // ===============================================================
 // 3. CÁC HÀM CÀI ĐẶT I2S
@@ -123,7 +126,13 @@ void onWebsocketMessage(WebsocketsMessage message) {
             currentState = STATE_WAITING;
         }
         else if (text_msg == "TTS_END") {
-            Serial.println("End of TTS. Returning to streaming mode.");
+            Serial.println("End of TTS. Flushing playback buffer and returning to streaming mode.");
+            // Flush any remaining buffered audio
+            if (playback_buffer_fill > 0) {
+                size_t bytes_written = 0;
+                i2s_write(I2S_SPEAKER_PORT, playback_buffer, playback_buffer_fill, &bytes_written, portMAX_DELAY);
+                playback_buffer_fill = 0;
+            }
             currentState = STATE_STREAMING;
         }
     }
@@ -132,12 +141,14 @@ void onWebsocketMessage(WebsocketsMessage message) {
             Serial.println("Receiving audio from server, pausing mic and starting playback...");
             currentState = STATE_PLAYING_RESPONSE;
             i2s_zero_dma_buffer(I2S_SPEAKER_PORT);
+            playback_buffer_fill = 0; // Reset buffer
         }
         
         size_t len = message.length();
         int16_t temp_write_buffer[len / sizeof(int16_t)];
         memcpy(temp_write_buffer, message.c_str(), len);
         
+        // Apply gain
         for (int i = 0; i < len / sizeof(int16_t); i++) {
           float amplified = temp_write_buffer[i] * SPEAKER_GAIN;
           if (amplified > 32767) amplified = 32767; 
@@ -145,8 +156,20 @@ void onWebsocketMessage(WebsocketsMessage message) {
           temp_write_buffer[i] = (int16_t)amplified;
         }
         
-        size_t bytes_written = 0;
-        i2s_write(I2S_SPEAKER_PORT, temp_write_buffer, len, &bytes_written, portMAX_DELAY);
+        // Buffering strategy: accumulate a bit before playing to smooth jitter
+        if (playback_buffer_fill + len <= PLAYBACK_BUFFER_SIZE) {
+            // Add to buffer
+            memcpy(playback_buffer + playback_buffer_fill, temp_write_buffer, len);
+            playback_buffer_fill += len;
+        }
+        
+        // When buffer is reasonably full, write a chunk to I2S
+        const size_t FLUSH_THRESHOLD = 2048; // Flush when we have at least 2KB
+        if (playback_buffer_fill >= FLUSH_THRESHOLD) {
+            size_t bytes_written = 0;
+            i2s_write(I2S_SPEAKER_PORT, playback_buffer, playback_buffer_fill, &bytes_written, portMAX_DELAY);
+            playback_buffer_fill = 0;
+        }
     }
 }
 
@@ -175,7 +198,7 @@ void setup() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
-    WiFi.begin(ssid, password);
+    // WiFi.begin(ssid, password);
 
     delay(500);
     Serial.print(".");
@@ -203,9 +226,14 @@ void setup() {
 }
 
 void loop() {
+  // Poll WebSocket to process incoming messages
   client.poll();
-  if (!client.available()) {
+  
+  // Only attempt reconnect if truly disconnected AND not currently playing audio
+  // (avoid reconnecting mid-stream which would cut off TTS response)
+  if (!client.available() && currentState != STATE_PLAYING_RESPONSE && currentState != STATE_WAITING) {
     Serial.println("WebSocket disconnected. Reconnecting...");
+    currentState = STATE_STREAMING; // Reset state before reconnect
     if (!client.connect(websocket_server_host, websocket_server_port, websocket_server_path)) {
       Serial.println("Reconnect attempt failed.");
       delay(2000);

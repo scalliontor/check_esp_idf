@@ -7,6 +7,7 @@ import torch
 from collections import deque
 import numpy as np
 from pathlib import Path # Import Path để kiểm tra kiểu dữ liệu
+import soundfile as sf
 
 # --- IMPORT PIPELINE TỪ THƯ MỤC MODULES ---
 from modules.pipeline import VoiceAssistantPipeline
@@ -19,7 +20,7 @@ CHANNELS = 1
 VAD_CHUNK_SIZE = 1024
 VAD_SPEECH_THRESHOLD = 0.5
 VAD_SILENCE_FRAMES_TRIGGER = 1
-VAD_SILENCE_FRAMES_END = 25
+VAD_SILENCE_FRAMES_END = 50
 VAD_BUFFER_FRAMES = 5
 
 app = FastAPI()
@@ -70,13 +71,22 @@ async def websocket_endpoint(websocket: WebSocket):
     silence_counter = 0
     speech_trigger_counter = 0
     is_processing = False
+    connection_closed = False
     
     pre_buffer = deque(maxlen=VAD_BUFFER_FRAMES) 
     speech_buffer = []
 
     try:
         while True:
-            data = await websocket.receive_bytes()
+            try:
+                data = await websocket.receive_bytes()
+            except WebSocketDisconnect:
+                print(f"\nClient {websocket.client.host} disconnected during receive.")
+                return
+            except RuntimeError as e:
+                # e.g., "WebSocket is not connected. Need to call accept first." after client closes
+                print(f"\nWebSocket runtime error during receive: {e}")
+                return
 
             if is_processing:
                 continue
@@ -85,7 +95,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"\nWarning: Received chunk of size {len(data)}, expected {VAD_CHUNK_SIZE}. Ignoring.")
                 continue
 
-            audio_numpy = np.frombuffer(data, dtype=np.int16)
+            # copy() để tránh cảnh báo NumPy non-writable khi chuyển sang torch tensor
+            audio_numpy = np.frombuffer(data, dtype=np.int16).copy()
             audio_tensor = torch.from_numpy(audio_numpy).float() / 32768.0
             
             with torch.no_grad():
@@ -123,41 +134,76 @@ async def websocket_endpoint(websocket: WebSocket):
                                 output_audio_path = result.get("output_audio") if isinstance(result, dict) else None
                                 
                                 if output_audio_path and os.path.exists(output_audio_path):
-
-                                    # ======================================================= #
-                                    # --- PHẦN ĐƯỢC THAY THẾ BẰNG LOGIC ĐƠN GIẢN HƠN ---       #
-                                    # ======================================================= #
+                                    # Robust streaming: decode WAV, convert to 16k mono int16 PCM, and stream in paced chunks
                                     try:
-                                        # Chuyển đổi Path object thành string để đảm bảo tương thích
-                                        output_path_str = str(output_audio_path)
-                                        
-                                        with open(output_path_str, 'rb') as f_wav:
-                                            # Đọc toàn bộ file
-                                            full_wav_data = f_wav.read()
-                                        
-                                        # Header của file WAV chuẩn là 44 bytes.
-                                        # Chúng ta chỉ gửi dữ liệu PCM thô (raw audio) sau header.
-                                        pcm_data = full_wav_data[44:]
-                                        
-                                        # Gửi dữ liệu theo từng chunk để không làm quá tải websocket
-                                        chunk_size_to_send = 2048 
-                                        for i in range(0, len(pcm_data), chunk_size_to_send):
-                                            chunk = pcm_data[i:i+chunk_size_to_send]
-                                            await websocket.send_bytes(chunk)
+                                        # Đọc WAV bằng soundfile để xử lý chuẩn
+                                        wav, sr = sf.read(str(output_audio_path), dtype='float32', always_2d=True)
+                                        # Chọn kênh mono (trung bình 2 kênh nếu stereo)
+                                        if wav.shape[1] > 1:
+                                            wav = wav.mean(axis=1)
+                                        else:
+                                            wav = wav[:, 0]
+
+                                        target_sr = SAMPLE_RATE  # 16k để khớp ESP32
+                                        if sr != target_sr:
+                                            # Nội suy tuyến tính đơn giản để giảm phụ thuộc
+                                            new_len = int(len(wav) * target_sr / sr)
+                                            wav = np.interp(
+                                                np.linspace(0.0, 1.0, new_len, endpoint=False),
+                                                np.linspace(0.0, 1.0, len(wav), endpoint=False),
+                                                wav
+                                            ).astype('float32')
+                                            sr = target_sr
+
+                                        # Chuyển sang int16 PCM
+                                        wav = np.clip(wav, -1.0, 1.0)
+                                        pcm_int16 = (wav * 32767.0).astype(np.int16)
+                                        pcm_bytes = pcm_int16.tobytes()
+
+                                        # Stream theo từng chunk bytes
+                                        bytes_per_sample = 2  # int16
+                                        # Giữ chunk nhỏ để tránh tràn buffer client (ESP32)
+                                        samples_per_chunk = 512  # 512 samples = 1024 bytes ~ 32ms @16kHz
+                                        chunk_size_to_send = samples_per_chunk * bytes_per_sample
+                                        chunk_duration_sec = samples_per_chunk / float(target_sr)
+
+                                        # Tùy chọn: báo hiệu bắt đầu TTS
+                                        # await websocket.send_text("TTS_START")
+                                        client_alive = True
+                                        for i in range(0, len(pcm_bytes), chunk_size_to_send):
+                                            chunk = pcm_bytes[i:i+chunk_size_to_send]
+                                            if not chunk or not client_alive:
+                                                break
+                                            try:
+                                                await websocket.send_bytes(chunk)
+                                            except Exception as e:
+                                                # Client đã đóng kết nối (ví dụ: reset hoặc reconnect)
+                                                print("\nClient disconnected during streaming; aborting send loop.")
+                                                client_alive = False
+                                                connection_closed = True
+                                                break
+                                            # Pace streaming để gần real-time, giúp client xử lý kịp
+                                            await asyncio.sleep(chunk_duration_sec)
 
                                     except Exception as e:
-                                        print(f"\nFailed to stream WAV frames: {e}")
-                                    # ======================================================= #
-                                    # --- KẾT THÚC PHẦN THAY THẾ ---                           #
-                                    # ======================================================= #
+                                        import traceback
+                                        print("\nFailed to stream WAV frames:")
+                                        traceback.print_exc()
                                         
                                 else:
                                     print("\nPipeline did not return a valid audio output path.")
                             except Exception as e:
                                 print(f"\nAn error occurred during pipeline processing: {e}")
                             finally:
-                                await websocket.send_text("TTS_END")
-                                print("\nFinished streaming response.")
+                                # Chỉ gửi TTS_END nếu kết nối còn mở
+                                try:
+                                    await websocket.send_text("TTS_END")
+                                    print("\nFinished streaming response.")
+                                except Exception:
+                                    print("\nClient disconnected before TTS_END could be sent.")
+                                # Nếu client đã đóng kết nối, kết thúc handler sớm
+                                if connection_closed:
+                                    return
                         is_speaking = False
                         silence_counter = 0
                         speech_buffer.clear()

@@ -25,7 +25,24 @@ uvicorn vad_server:app --host 0.0.0.0 --port 8000
 ```
 
 ### 3) Configure ESP32 firmware
-
+```
+Mic
+#define I2S_MIC_SERIAL_CLOCK    14
+#define I2S_MIC_WORD_SELECT     12
+#define I2S_MIC_SERIAL_DATA     15
+Speaker
+#define I2S_SPEAKER_SERIAL_CLOCK 18
+#define I2S_SPEAKER_WORD_SELECT  5
+#define I2S_SPEAKER_SERIAL_DATA  19
+#Screen
+gnd 2
+vcc 1
+scl
+sda
+res
+dc
+blk
+```
 Edit `vad/vad.ino`:
 - Set `ssid` and `password` to your Wi‑Fi
 - Set `websocket_server_host` to your server IP (avoid leading zeros, e.g., 172.20.10.2)
@@ -66,7 +83,7 @@ arduino-cli compile --fqbn esp32:esp32:esp32 ./vad
 arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 ./vad
 
 # Monitor serial
-arduino-cli monitor -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32s3 -c baudrate=115200
+arduino-cli monitor -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32 -c baudrate=115200
 ```
 
 ### 5) Use it

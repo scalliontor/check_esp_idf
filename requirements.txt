@@ -1,20 +1,30 @@
-# ===== Core Dependencies =====
-numpy>=1.24.0
-soundfile>=0.12.1
+# Python dependencies for test_wake_net
 
-# ===== Speech-to-Text (STT) =====
-sherpa-onnx>=1.10.0
+# --- Web server ---
+fastapi>=0.110
+uvicorn[standard]>=0.24
 
-# ===== Text-to-Speech (TTS) =====
-# ZipVoice dependencies (install từ source hoặc theo hướng dẫn của ZipVoice)
+# --- Core / numerics ---
+numpy>=1.24
+soundfile>=0.12
 
-# ===== Large Language Model (LLM) =====
-google-genai>=0.2.0
+# --- VAD (Silero via torch.hub) ---
+torch>=2.1
+torchaudio>=2.1
+torchcodec>=0.2
 
-# ===== Optional Dependencies =====
-librosa>=0.10.0  # Advanced audio processing
-resampy>=0.4.2   # Better resampling
-tqdm>=4.65.0     # Progress bars
-torch 
-torchaudio
-onnxruntime
+# --- STT (Zipformer with sherpa-onnx) ---
+sherpa-onnx>=1.10
+onnxruntime>=1.17
+
+# --- LLM (Gemini) ---
+google-genai>=0.3
+
+# --- TTS (ZipVoice) ---
+# Pull all runtime deps for ZipVoice from its own file
+-r ZipVoice/requirements.txt
+
+# --- Optional utilities ---
+tqdm>=4.65
+librosa>=0.10  # advanced audio ops (optional)
+resampy>=0.4.2 # higher-quality resampling (optional)
